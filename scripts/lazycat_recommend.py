@@ -66,6 +66,86 @@ INTENT_TERM_GROUPS = [
     ("日历", "通讯录", "caldav", "carddav", "baikal"),
 ]
 
+DOMAIN_PROFILES = [
+    {
+        "id": "wechat_public_account",
+        "label": "微信公众号/公众号内容跟踪",
+        "triggers": (
+            "公众号",
+            "微信公众号",
+            "微信公众",
+            "weixin official",
+            "public account",
+            "wxmp",
+        ),
+        "object_terms": (
+            "公众号",
+            "微信公众号",
+            "微信公众",
+            "weixin official accounts",
+            "weixin official account",
+            "public account",
+            "wxmp",
+        ),
+        "solution_terms": (
+            "rss",
+            "rsshub",
+            "rsspush",
+            "werss",
+            "wewe rss",
+            "juflow",
+            "订阅",
+            "更新",
+            "文章",
+            "推送",
+            "webhook",
+            "api",
+            "download",
+            "search",
+            "下载",
+            "搜索",
+            "抓取",
+        ),
+        "keywords": (
+            "公众号",
+            "微信公众号",
+            "WeRSS",
+            "WeWe RSS",
+            "RSSHub",
+            "RSS",
+            "订阅",
+            "文章更新",
+            "公众号文章",
+        ),
+        "preferred_packages": {
+            "community.lazycat.app.we-rss": 120,
+            "dev.libr.wewerss": 115,
+            "cloud.lazycat.app.rsspush": 95,
+            "cloud.lazycat.app.wxmp": 90,
+            "com.wbsu2003.weixin-search-mcp": 85,
+            "cloud.lazycat.app.juflow": 80,
+            "lazycat.app.checkchan": 72,
+            "cloud.lazycat.app.rsshub": 70,
+            "cloud.lazycat.app.feedhub": 55,
+            "cloud.lazycat.app.ai-rss-hub": 50,
+            "wcloud.gblw.app.miniflux": 45,
+            "cloud.lazycat.app.freshrss": 45,
+        },
+        "negative_terms": (
+            "设备域名",
+            "端口映射",
+            "端口监控",
+            "服务器监控",
+            "系统监控",
+            "视频监控",
+            "prometheus",
+            "grafana",
+            "hertzbeat",
+            "nezha",
+        ),
+    },
+]
+
 GENERIC_TERMS = {
     "一个",
     "一下",
@@ -109,7 +189,6 @@ GUIDE_SIGNAL_TERMS = (
     "如何",
     "教程",
     "攻略",
-    "文章",
     "步骤",
     "配置",
     "设置",
@@ -144,6 +223,19 @@ APP_SIGNAL_TERMS = (
     "哪个好",
     "找一个",
     "有没有",
+)
+
+STRONG_APP_SIGNAL_TERMS = (
+    "推荐应用",
+    "商店里面的应用",
+    "商店里的应用",
+    "商店应用",
+    "应用商店",
+    "懒猫商店",
+    "有没有应用",
+    "找个应用",
+    "找一个应用",
+    "推荐一下",
 )
 
 
@@ -223,6 +315,10 @@ def meaningful_terms(query):
     compact = compact_need(query)
     lowered = compact.lower()
 
+    for profile in active_domain_profiles(query):
+        terms.extend(profile["object_terms"])
+        terms.extend(profile["solution_terms"])
+
     for group in INTENT_TERM_GROUPS:
         if any(term.lower() in query for term in group):
             terms.extend(group)
@@ -247,11 +343,26 @@ def has_any(query, terms):
     return any(term.lower() in lowered for term in terms)
 
 
+def active_domain_profiles(query):
+    lowered = (query or "").lower()
+    profiles = []
+    for profile in DOMAIN_PROFILES:
+        if any(term.lower() in lowered for term in profile["triggers"]):
+            profiles.append(profile)
+    return profiles
+
+
 def detect_mode(query):
     guide_signal = has_any(query, GUIDE_SIGNAL_TERMS)
     app_signal = has_any(query, APP_SIGNAL_TERMS)
+    strong_app_signal = has_any(query, STRONG_APP_SIGNAL_TERMS)
     remote_signal = has_any(query, ("远程访问", "远程桌面", "远程控制", "内网穿透", "vnc", "rdp", "3389"))
+    profiles = active_domain_profiles(query)
 
+    if strong_app_signal and not has_any(query, ("攻略", "教程", "步骤", "怎么配置", "如何配置")):
+        return "apps", "这是明确要求推荐商店应用的问题，优先需要应用结果。"
+    if profiles and has_any(query, ("下载", "批量", "搜索", "检索", "监控", "订阅", "推送", "更新", "生成")) and not has_any(query, ("怎么", "如何", "教程", "攻略", "步骤")):
+        return "both", "这是围绕具体对象的自动化/订阅/搜索需求，需要先看可安装应用，必要时补充攻略。"
     if remote_signal and not has_any(query, ("应用", "软件", "app", "安装什么", "推荐应用")):
         return "guides", "这是远程访问/内网穿透类问题，优先需要操作攻略。"
     if guide_signal and not app_signal:
@@ -308,6 +419,63 @@ def evidence_terms(query, fields, strong_indexes=None):
     return [term for term in meaningful_terms(query) if term.lower() in text]
 
 
+def profile_match(query, fields, package):
+    profiles = active_domain_profiles(query)
+    if not profiles:
+        return 0, [], []
+
+    text = result_text(fields)
+    strong_text = result_text([fields[index] for index in [0, 1, 3, 5] if index < len(fields)])
+    score = 0
+    hits = []
+    negative_hits = []
+
+    for profile in profiles:
+        package_score = profile.get("preferred_packages", {}).get(package, 0)
+        if package_score:
+            score += package_score
+            hits.append(f"preferred:{profile['id']}")
+
+        object_hits = [term for term in profile["object_terms"] if term.lower() in text]
+        strong_object_hits = [term for term in profile["object_terms"] if term.lower() in strong_text]
+        solution_hits = [term for term in profile["solution_terms"] if term.lower() in text]
+        strong_solution_hits = [term for term in profile["solution_terms"] if term.lower() in strong_text]
+        negative = [term for term in profile.get("negative_terms", ()) if term.lower() in text]
+
+        score += len(object_hits) * 24
+        score += len(strong_object_hits) * 28
+        score += len(solution_hits) * 8
+        score += len(strong_solution_hits) * 12
+        score -= len(negative) * 35
+
+        hits.extend(object_hits[:4])
+        hits.extend(solution_hits[:4])
+        negative_hits.extend(negative[:4])
+
+    lowered_query = (query or "").lower()
+    if "下载" in lowered_query or "批量" in lowered_query or "历史文章" in lowered_query:
+        if package == "cloud.lazycat.app.wxmp":
+            score += 70
+        if package in ("community.lazycat.app.we-rss", "dev.libr.wewerss"):
+            score += 20
+    if "搜索" in lowered_query or "mcp" in lowered_query or "检索" in lowered_query:
+        if package == "com.wbsu2003.weixin-search-mcp":
+            score += 75
+    if "监控" in lowered_query or "更新" in lowered_query or "订阅" in lowered_query or "推送" in lowered_query:
+        if package in ("community.lazycat.app.we-rss", "dev.libr.wewerss"):
+            score += 60
+        if package == "cloud.lazycat.app.rsspush":
+            score += 55
+        if package == "cloud.lazycat.app.juflow":
+            score += 35
+        if package == "lazycat.app.checkchan":
+            score += 30
+        if package == "cloud.lazycat.app.rsshub":
+            score += 25
+
+    return score, ordered_unique(hits), ordered_unique(negative_hits)
+
+
 def query_intent_groups(query):
     lowered = (query or "").lower()
     groups = []
@@ -354,6 +522,9 @@ def build_search_keywords(query, limit=8):
     if compact and compact != query:
         keywords.append(compact)
 
+    for profile in active_domain_profiles(query):
+        keywords.extend(profile["keywords"])
+
     lowered = query.lower()
     matched_terms = []
     for group in INTENT_TERM_GROUPS:
@@ -396,6 +567,7 @@ def normalize_app(item, query):
     ]
     strong_fields = [fields[index] for index in [0, 1, 3, 5]]
     base_score = score_text(query, fields) + coverage_bonus(query, fields, strong_fields)
+    profile_score, profile_hits, profile_negative_hits = profile_match(query, fields, package)
     return {
         "type": "app",
         "name": name,
@@ -414,8 +586,11 @@ def normalize_app(item, query):
         "strong_evidence_terms": evidence_terms(query, fields, strong_indexes=[0, 1, 3, 5]),
         "evidence_terms": evidence_terms(query, fields),
         "intent_coverage": intent_coverage(query, fields),
+        "profile_score": profile_score,
+        "profile_hits": profile_hits,
+        "profile_negative_hits": profile_negative_hits,
         "matched_keywords": [],
-        "score": base_score + min(int(count.get("downloads") or 0), 5000) / 10000,
+        "score": base_score + profile_score + min(int(count.get("downloads") or 0), 5000) / 10000,
     }
 
 
@@ -473,6 +648,10 @@ def search_apps(keyword, category_id=0, size=20, page=0, sort="counting.desc"):
     return fetch_json(f"{APPSTORE_API}/user/app/list?{q(params)}")
 
 
+def list_apps(category_id=0, sort="counting.desc", size=5000):
+    return search_apps("", category_id=category_id, size=size, sort=sort).get("items") or []
+
+
 def get_app_categories():
     return fetch_json(f"{APPSTORE_CDN}/zh/categories.json")
 
@@ -495,29 +674,45 @@ def search_guides(keyword, category_id=None, size=20, page=0, sort="-createdAt")
 def collect_apps(query_text, category_id, size, sort):
     collected = {}
     search_keywords = build_search_keywords(query_text)
-    fetch_size = max(size * 3, size, 12)
+    profiles = active_domain_profiles(query_text)
+    scoring_query = " ".join(search_keywords)
+    keyword_boosts = {}
+
     for keyword_index, keyword in enumerate(search_keywords):
-        payload = search_apps(keyword, category_id=category_id, size=fetch_size, sort=sort)
-        for item in payload.get("items") or []:
+        try:
+            items = search_apps(keyword, category_id=category_id, size=max(size * 4, 24), sort=sort).get("items") or []
+        except Exception:
+            items = []
+        for rank, item in enumerate(items):
             package = item.get("package") or safe_get(item, ["version", "package"], "")
             if not package:
                 continue
             normalized = normalize_app(item, f"{query_text} {keyword}".strip())
-            if not normalized["strong_evidence_terms"]:
+            if profiles:
+                if normalized["profile_score"] <= 0 or not normalized["profile_hits"]:
+                    continue
+            elif not normalized["strong_evidence_terms"]:
                 continue
-            if normalized["strong_evidence_terms"]:
-                normalized["score"] += 12
-            normalized["matched_keywords"] = [keyword] if keyword else []
-            normalized["score"] += max(0, 3 - keyword_index * 0.25)
-            existing = collected.get(package)
-            if not existing or normalized["score"] > existing["score"]:
-                if existing:
-                    normalized["matched_keywords"] = ordered_unique(
-                        existing.get("matched_keywords", []) + normalized["matched_keywords"]
-                    )
-                collected[package] = normalized
-            elif existing and keyword:
-                existing["matched_keywords"] = ordered_unique(existing.get("matched_keywords", []) + [keyword])
+            boost = max(0, 90 - keyword_index * 5 - rank * 3)
+            keyword_boosts[package] = max(keyword_boosts.get(package, 0), boost)
+
+    for item in list_apps(category_id=category_id, sort=sort):
+        package = item.get("package") or safe_get(item, ["version", "package"], "")
+        if not package:
+            continue
+        normalized = normalize_app(item, scoring_query)
+        if profiles:
+            if normalized["profile_score"] <= 0 or not normalized["profile_hits"]:
+                continue
+        elif not normalized["strong_evidence_terms"]:
+            continue
+        if normalized["strong_evidence_terms"]:
+            normalized["score"] += 12
+        if package in keyword_boosts:
+            normalized["score"] += keyword_boosts[package]
+        normalized["matched_keywords"] = search_keywords
+        collected[package] = normalized
+
     return sorted(collected.values(), key=lambda x: x["score"], reverse=True)[:size], search_keywords
 
 

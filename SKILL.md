@@ -15,7 +15,7 @@ Always use live Lazycat data before answering. Do not answer from memory.
    - **Both**: the user needs an app and also needs setup/use guidance.
 2. Search only what is needed. Do not force an app recommendation into a guide-only question.
 3. Read the returned titles, names, summaries, and links. Make an independent relevance judgment instead of mechanically trusting the first score.
-4. Answer with concise analysis and the needed links. Do not include crawling details, raw JSON, endpoint names, category dumps, live counts, scores, or search keywords unless the user asks for them.
+4. Answer with concise analysis and the needed links. Do not include crawling details, raw JSON, endpoint names, category dumps, live counts, scores, package IDs, or search keywords unless the user asks for them.
 
 Default automatic search:
 
@@ -48,6 +48,7 @@ python3 scripts/lazycat_recommend.py "<user need>" --mode guides
 - Do not invent app features or guide content not present in the returned fields.
 - If relevance is weak, label the result as "可作为候选" instead of presenting it as certain.
 - Omit empty or irrelevant sections. If there is no strong app match, do not show "推荐应用".
+- Do not say "最新实时检索保证当前可用" in the answer. Just give the recommendation.
 
 ## Answer Shape
 
@@ -59,7 +60,7 @@ Answer in Chinese unless the user asks otherwise. Use the sections that fit the 
 建议方案：<1-2 sentences with the practical route.>
 
 推荐应用：
-1. [<official app name from apps[].name>](<app url>)：<why it matches, in one sentence.>
+1. [<official app name from apps[].name>](<app url>)：<why it matches, in one sentence. Include one caveat if needed.>
 
 推荐攻略：
 1. [<guide title>](<guide url>)：<what this article helps with, in one sentence.>
@@ -81,12 +82,17 @@ Limits:
 - Usually return 1-2 high-confidence items, not a catalog.
 - Do not add a long preface or explain how the search was performed.
 - If nothing strong is found, say so plainly and give the closest candidate link only if it is still useful.
+- For app recommendations, prefer "首选 / 备选 / 可配合" wording when it clarifies the route.
 
 ## Example Judgment
 
 User: "我要通过懒猫微服的内网穿透远程访问我的另外一台电脑"
 
 Expected behavior: analyze this as a remote-access how-to problem, not an app-shopping problem. Search guides first and recommend an article such as "通过懒猫远程访问windows电脑" if returned by live data. Do not add a "推荐应用" section unless a live app result is clearly necessary.
+
+User: "我想要监控一下公众号，某个公众号，你帮我推荐一下懒猫商店里面的应用"
+
+Expected behavior: analyze "监控公众号" as tracking a public account's article updates, not server/port monitoring. Prefer apps such as WeRSS or WeWe RSS for subscribing/generating RSS. If push notification is needed, mention rsspush as a companion. Do not recommend server monitoring apps like Grafana, Prometheus, Uptime Kuma, HertzBeat, Nezha, or "在线设备获取" unless the user is actually monitoring infrastructure.
 
 ## Data Source Reference
 
