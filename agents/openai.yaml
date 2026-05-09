@@ -1,6 +1,6 @@
 interface:
   display_name: "懒猫微服推荐"
-  short_description: "理解需求后实时搜索应用和攻略"
-  default_prompt: "我说出需求后，用 $lazycat-recommender 搜索懒猫商店和攻略，直接给我建议、相关文章和应用链接。"
+  short_description: "分析需求后推荐应用或攻略"
+  default_prompt: "我说出懒猫微服使用需求后，用 $lazycat-recommender 先分析我到底需要应用、攻略还是两者，再给出简洁建议和官方链接。"
 policy:
   allow_implicit_invocation: true

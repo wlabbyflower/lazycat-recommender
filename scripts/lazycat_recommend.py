@@ -38,6 +38,10 @@ FILLER_PHRASES = [
     "一下",
     "相关",
     "需求",
+    "lazycat",
+    "lazy cat",
+    "microserver",
+    "micro server",
 ]
 
 INTENT_TERM_GROUPS = [
@@ -51,6 +55,7 @@ INTENT_TERM_GROUPS = [
     ("笔记", "文档", "知识库", "wiki", "notion", "outline", "思源"),
     ("密码", "密钥", "凭据", "bitwarden", "vaultwarden", "passkey"),
     ("内网穿透", "远程访问", "反向代理", "frp", "cloudflare", "tailscale", "zerotier", "ddns"),
+    ("远程桌面", "远程控制", "电脑", "windows", "rdp", "vnc", "3389", "被控端", "控制端", "netmap"),
     ("网站", "博客", "建站", "主页", "wordpress", "typecho", "halo"),
     ("代码", "git", "仓库", "gitea", "gitlab", "code-server", "vscode"),
     ("数据库", "mysql", "postgres", "redis", "mongodb"),
@@ -87,7 +92,59 @@ GENERIC_TERMS = {
     "配置",
     "推荐",
     "和",
+    "lazycat",
+    "lazy",
+    "cat",
+    "microserver",
+    "micro",
+    "service",
+    "server",
+    "cloud",
+    "app",
+    "apps",
 }
+
+GUIDE_SIGNAL_TERMS = (
+    "怎么",
+    "如何",
+    "教程",
+    "攻略",
+    "文章",
+    "步骤",
+    "配置",
+    "设置",
+    "搭建",
+    "部署",
+    "访问",
+    "连接",
+    "远程",
+    "内网穿透",
+    "端口",
+    "转发",
+    "登录",
+    "报错",
+    "失败",
+    "问题",
+    "通过",
+    "远程桌面",
+    "vnc",
+    "rdp",
+)
+
+APP_SIGNAL_TERMS = (
+    "应用",
+    "软件",
+    "app",
+    "安装什么",
+    "用什么",
+    "推荐",
+    "替代",
+    "类似",
+    "工具",
+    "哪个好",
+    "找一个",
+    "有没有",
+)
 
 
 def fetch_json(url, timeout=20):
@@ -183,6 +240,27 @@ def meaningful_terms(query):
                 terms.extend(cjk[i : i + 2] for i in range(len(cjk) - 1))
 
     return [term for term in ordered_unique(terms) if term not in GENERIC_TERMS and len(term) > 1]
+
+
+def has_any(query, terms):
+    lowered = (query or "").lower()
+    return any(term.lower() in lowered for term in terms)
+
+
+def detect_mode(query):
+    guide_signal = has_any(query, GUIDE_SIGNAL_TERMS)
+    app_signal = has_any(query, APP_SIGNAL_TERMS)
+    remote_signal = has_any(query, ("远程访问", "远程桌面", "远程控制", "内网穿透", "vnc", "rdp", "3389"))
+
+    if remote_signal and not has_any(query, ("应用", "软件", "app", "安装什么", "推荐应用")):
+        return "guides", "这是远程访问/内网穿透类问题，优先需要操作攻略。"
+    if guide_signal and not app_signal:
+        return "guides", "这是配置、访问或排障类问题，优先需要攻略文章。"
+    if app_signal and not guide_signal:
+        return "apps", "这是选应用或找软件的问题，优先需要应用结果。"
+    if app_signal and guide_signal:
+        return "both", "这个需求同时包含选应用和使用配置，需要应用与攻略一起判断。"
+    return "both", "这是泛化解决方案需求，需要同时检查应用和攻略。"
 
 
 def query_terms(query):
@@ -282,8 +360,8 @@ def build_search_keywords(query, limit=8):
         if any(term.lower() in lowered for term in group):
             matched_terms.extend(group[:4])
 
-    latin_terms = re.findall(r"[a-z0-9][a-z0-9.+_-]*(?:\s+[a-z0-9][a-z0-9.+_-]*)?", lowered)
-    matched_terms.extend(latin_terms)
+    latin_terms = re.findall(r"[a-z0-9][a-z0-9.+_-]*", lowered)
+    matched_terms.extend(term for term in latin_terms if term not in GENERIC_TERMS)
 
     keywords.extend(matched_terms)
     if len(matched_terms) >= 2:
@@ -477,7 +555,7 @@ def main():
     parser.add_argument("query", nargs="*", help="User need / search keywords")
     parser.add_argument("--apps", type=int, default=8, help="Number of app candidates to return")
     parser.add_argument("--guides", type=int, default=8, help="Number of guide candidates to return")
-    parser.add_argument("--mode", choices=["both", "apps", "guides"], default="both", help="Search apps, guides, or both")
+    parser.add_argument("--mode", choices=["auto", "both", "apps", "guides"], default="auto", help="Search apps, guides, both, or auto-detect")
     parser.add_argument("--app-category", type=int, default=0, help="Appstore category id, default 0")
     parser.add_argument("--guide-category", type=int, help="Playground guideline category id")
     parser.add_argument("--include-categories", action="store_true", help="Include category lists for category discovery")
@@ -486,11 +564,18 @@ def main():
     args = parser.parse_args()
 
     query_text = " ".join(args.query).strip()
+    detected_mode, mode_reason = detect_mode(query_text)
+    effective_mode = detected_mode if args.mode == "auto" else args.mode
     search_keywords = build_search_keywords(query_text)
 
     result = {
         "queried_at_unix": int(time.time()),
         "query": query_text,
+        "analysis": {
+            "detected_mode": detected_mode,
+            "effective_mode": effective_mode,
+            "reason": mode_reason,
+        },
         "search_keywords": search_keywords,
         "sources": {
             "appstore": "https://lazycat.cloud/appstore/",
@@ -532,7 +617,7 @@ def main():
         except Exception as exc:
             result["errors"].append(f"guide categories fetch failed: {exc}")
 
-    if args.mode in ("both", "apps"):
+    if effective_mode in ("both", "apps"):
         try:
             result["apps"], app_keywords = collect_apps(
                 query_text,
@@ -544,7 +629,7 @@ def main():
         except Exception as exc:
             result["errors"].append(f"app search failed: {exc}")
 
-    if args.mode in ("both", "guides"):
+    if effective_mode in ("both", "guides"):
         try:
             result["guides"], guide_keywords = collect_guides(
                 query_text,
