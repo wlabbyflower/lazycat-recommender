@@ -585,13 +585,15 @@ def profile_match(query, fields, package):
         if package in ("community.lazycat.app.we-rss", "dev.libr.wewerss"):
             score += 60
         if package == "cloud.lazycat.app.rsspush":
-            score += 55
+            score += 85
         if package == "cloud.lazycat.app.juflow":
-            score += 35
+            score += 45
         if package == "lazycat.app.checkchan":
             score += 30
         if package == "cloud.lazycat.app.rsshub":
             score += 25
+        if package == "cloud.lazycat.app.wxmp" and not has_any(lowered_query, ("下载", "批量", "历史文章", "导出")):
+            score -= 55
 
     return score, ordered_unique(hits), ordered_unique(negative_hits)
 
@@ -815,6 +817,155 @@ def truncate(text, max_len):
     return text[: max_len - 1] + "..."
 
 
+def answer_text(result):
+    mode = result.get("analysis", {}).get("effective_mode") or "both"
+    query = result.get("query") or ""
+    apps = result.get("apps") or []
+    guides = result.get("guides") or []
+    profiles = active_domain_profiles(query)
+    profile_ids = {profile["id"] for profile in profiles}
+    lines = []
+
+    if mode == "apps":
+        lines.extend(apps_answer(query, apps, profile_ids))
+    elif mode == "guides":
+        lines.extend(guides_answer(query, guides, profile_ids))
+    else:
+        lines.extend(both_answer(query, apps, guides, profile_ids))
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def app_reason(app, query, profile_ids):
+    name = app.get("name") or "这个应用"
+    brief = app.get("brief") or app.get("description") or ""
+    lowered = (query or "").lower()
+    package = app.get("package")
+
+    if "wechat_public_account" in profile_ids:
+        if package == "community.lazycat.app.we-rss":
+            return "专门订阅和管理微信公众号内容，能定时更新文章并生成 RSS，最贴近“监控公众号更新”。"
+        if package == "dev.libr.wewerss":
+            return "同样面向微信公众号 RSS 订阅，支持全文输出，适合作为 WeRSS 的备选。"
+        if package == "cloud.lazycat.app.rsspush":
+            return "用于把 RSS 更新主动推送到微信、Telegram、飞书等渠道，适合和 WeRSS/WeWe RSS 搭配。"
+        if package == "cloud.lazycat.app.juflow":
+            return "适合同时聚合公众号和其他平台内容；只监控少量公众号时会比 WeRSS 更重。"
+        if package == "cloud.lazycat.app.wxmp":
+            if has_any(lowered, ("下载", "批量", "历史文章", "导出")):
+                return "偏向批量下载公众号历史文章和导出数据，适合归档，不是实时提醒的首选。"
+            return "偏向公众号文章批量下载和归档，不是实时监控更新的首选。"
+        if package == "com.wbsu2003.weixin-search-mcp":
+            return "偏向搜索公众号文章并接入 MCP，不是监控更新提醒的首选。"
+
+    if "smart_screen" in profile_ids and package == "cloud.lazycat.app.lzctvcontroller":
+        return "官方懒猫智慧屏应用，用于大屏浏览和遥控操作。"
+
+    if brief:
+        return truncate(brief, 90)
+    return f"{name} 和你的需求关键词匹配，可作为候选。"
+
+
+def guide_reason(guide, query, profile_ids):
+    title = guide.get("title") or "这篇攻略"
+    summary = guide.get("summary") or ""
+    guide_id = guide.get("id")
+
+    if "smart_screen" in profile_ids:
+        if guide_id == 569:
+            return "这篇讲的是用懒猫微服和懒猫智慧屏在大屏上看电视，且关联了懒猫智慧屏应用。"
+        if guide_id == 1124:
+            return "这篇适合智慧屏接墨水屏的场景。"
+        if guide_id == 422:
+            return "这篇偏懒猫智慧屏入门使用。"
+
+    if "wechat_public_account" in profile_ids:
+        if "WeRSS" in title or "WeWe RSS" in title or "RSSHub" in title or "RSSPush" in title:
+            return "这篇和公众号 RSS 订阅或推送链路相关。"
+
+    if summary:
+        return truncate(summary, 90)
+    return "和你的需求关键词匹配，可作为候选。"
+
+
+def apps_answer(query, apps, profile_ids):
+    lines = []
+    if "wechat_public_account" in profile_ids:
+        lines.append("需求分析：你要监控的是微信公众号内容更新，不是服务器端口或系统状态监控；这类需求优先找能订阅公众号、生成 RSS 或推送 RSS 更新的应用。")
+        lines.append("")
+        lines.append("建议方案：首选 WeRSS；如果你还要主动提醒，再配合 rsspush。")
+    else:
+        lines.append("需求分析：你明确在找懒猫商店里的应用，所以这里只给应用推荐，不附带攻略。")
+        lines.append("")
+        lines.append("建议方案：优先看和需求名称、简介、关键词直接匹配的应用。")
+
+    lines.append("")
+    lines.append("推荐应用：")
+    if not apps:
+        lines.append("没有找到足够匹配的商店应用。")
+        return lines
+
+    for index, app in enumerate(select_apps_for_answer(apps, profile_ids), 1):
+        lines.append(f"{index}. [{app.get('name')}]({app.get('url')})：{app_reason(app, query, profile_ids)}")
+    return lines
+
+
+def guides_answer(query, guides, profile_ids):
+    lines = [
+        "需求分析：你明确要的是攻略/教程，所以这里只给攻略链接，不附带应用推荐。",
+        "",
+        "建议方案：优先看标题、正文和关联应用都匹配的官方 Playground 文章。",
+        "",
+        "推荐攻略：",
+    ]
+    if not guides:
+        lines.append("没有找到足够匹配的攻略。")
+        return lines
+
+    for index, guide in enumerate(guides[:2], 1):
+        lines.append(f"{index}. [{guide.get('title')}]({guide.get('url')})：{guide_reason(guide, query, profile_ids)}")
+    return lines
+
+
+def both_answer(query, apps, guides, profile_ids):
+    lines = [
+        "需求分析：这个需求既涉及选择工具，也可能需要后续配置，所以同时给应用和攻略候选。",
+        "",
+    ]
+    if apps:
+        lines.append("推荐应用：")
+        for index, app in enumerate(select_apps_for_answer(apps, profile_ids)[:2], 1):
+            lines.append(f"{index}. [{app.get('name')}]({app.get('url')})：{app_reason(app, query, profile_ids)}")
+        lines.append("")
+    if guides:
+        lines.append("推荐攻略：")
+        for index, guide in enumerate(guides[:2], 1):
+            lines.append(f"{index}. [{guide.get('title')}]({guide.get('url')})：{guide_reason(guide, query, profile_ids)}")
+    if not apps and not guides:
+        lines.append("没有找到足够匹配的应用或攻略。")
+    return lines
+
+
+def select_apps_for_answer(apps, profile_ids):
+    if "wechat_public_account" not in profile_ids:
+        return apps[:3]
+
+    preferred_order = [
+        "community.lazycat.app.we-rss",
+        "dev.libr.wewerss",
+        "cloud.lazycat.app.rsspush",
+        "cloud.lazycat.app.juflow",
+        "cloud.lazycat.app.wxmp",
+        "com.wbsu2003.weixin-search-mcp",
+    ]
+    by_package = {app.get("package"): app for app in apps}
+    selected = [by_package[package] for package in preferred_order if package in by_package]
+    for app in apps:
+        if app not in selected:
+            selected.append(app)
+    return selected[:3]
+
+
 def get_appstore_release():
     return fetch_text(f"{APPSTORE_CDN}/op/index")
 
@@ -943,6 +1094,7 @@ def main():
     parser.add_argument("--include-categories", action="store_true", help="Include category lists for category discovery")
     parser.add_argument("--sort-apps", default="counting.desc", help="App sort, e.g. counting.desc or updated_at.desc")
     parser.add_argument("--sort-guides", default="-createdAt", help="Guide sort, e.g. -createdAt or -updatedAt")
+    parser.add_argument("--format", choices=["json", "answer"], default="json", help="Output raw JSON or a concise Chinese answer")
     args = parser.parse_args()
 
     query_text = " ".join(args.query).strip()
@@ -1023,7 +1175,10 @@ def main():
         except Exception as exc:
             result["errors"].append(f"guide search failed: {exc}")
 
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.format == "answer":
+        print(answer_text(result), end="")
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if not result["errors"] else 2
 
 

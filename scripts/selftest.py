@@ -25,6 +25,19 @@ def run_case(query):
         raise AssertionError(f"invalid JSON for {query!r}: {exc}") from exc
 
 
+def run_answer(query):
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), query, "--apps", "8", "--guides", "8", "--format", "answer"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode not in (0, 2):
+        raise AssertionError(f"answer script failed for {query!r}: {proc.stderr}")
+    return proc.stdout
+
+
 def assert_true(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -52,6 +65,8 @@ CASES = [
         "query": "我想要监控一下公众号，某个公众号，你帮我推荐一下懒猫商店里面的应用",
         "mode": "apps",
         "must_packages": ["community.lazycat.app.we-rss"],
+        "answer_must_contain": ["推荐应用", "WeRSS", "WeWe RSS", "rsspush"],
+        "answer_must_not_contain": ["推荐攻略", "实操攻略", "快速上手", "Webhook", "GitHub", "Gosmee", "PrometheusAlert", "Grafana", "Uptime Kuma"],
         "forbid_packages": ["in.zhaoj.lazycatonlinedevice", "lazycat.app.hertzbeat", "white.lazycat.app.nezha-v1"],
     },
     {
@@ -100,6 +115,8 @@ CASES = [
         "must_first_guide_id": 569,
         "must_first_title": "懒猫微服怎么大屏看电视",
         "must_guide_product": "cloud.lazycat.app.lzctvcontroller",
+        "answer_must_contain": ["推荐攻略", "懒猫微服怎么大屏看电视"],
+        "answer_must_not_contain": ["推荐应用"],
     },
     {
         "name": "智慧屏应用首选官方应用",
@@ -244,6 +261,13 @@ def assert_case(case):
         needles = case["must_any_name_contains"]
         joined = "\n".join(app_names[:8])
         assert_true(any(needle.lower() in joined.lower() for needle in needles), f"{case['name']}: none of {needles} in {app_names[:8]}")
+
+    if case.get("answer_must_contain") or case.get("answer_must_not_contain"):
+        answer = run_answer(case["query"])
+        for needle in case.get("answer_must_contain", []):
+            assert_true(needle in answer, f"{case['name']}: answer missing {needle!r}: {answer}")
+        for needle in case.get("answer_must_not_contain", []):
+            assert_true(needle not in answer, f"{case['name']}: answer contains forbidden {needle!r}: {answer}")
 
 
 def main():

@@ -17,13 +17,21 @@ Always use live Lazycat data before answering. Do not answer from memory.
 3. Read the returned titles, names, summaries, associated products, and links. Make an independent relevance judgment instead of mechanically trusting the first score.
 4. Answer with concise analysis and the needed links. Do not include crawling details, raw JSON, endpoint names, category dumps, live counts, scores, package IDs, or search keywords unless the user asks for them.
 
-Default automatic search:
+Default automatic answer:
 
 ```bash
-python3 "$CODEX_HOME/skills/lazycat-recommender/scripts/lazycat_recommend.py" "<user need>"
+python3 "$CODEX_HOME/skills/lazycat-recommender/scripts/lazycat_recommend.py" "<user need>" --format answer
 ```
 
 If `CODEX_HOME` is unset, use the script path relative to this skill directory:
+
+```bash
+python3 scripts/lazycat_recommend.py "<user need>" --format answer
+```
+
+Return the script's Chinese answer directly unless the user explicitly asks you to rewrite it. Do not add extra sections, setup steps, outside links, GitHub manuals, package IDs, "why not" explanations, or app/guide sections that the script did not output.
+
+Use raw JSON only for debugging or if you need to inspect candidates:
 
 ```bash
 python3 scripts/lazycat_recommend.py "<user need>"
@@ -32,13 +40,14 @@ python3 scripts/lazycat_recommend.py "<user need>"
 Force one side only when the user explicitly asks for it or the intent is obvious:
 
 ```bash
-python3 scripts/lazycat_recommend.py "<user need>" --mode apps
-python3 scripts/lazycat_recommend.py "<user need>" --mode guides
+python3 scripts/lazycat_recommend.py "<user need>" --mode apps --format answer
+python3 scripts/lazycat_recommend.py "<user need>" --mode guides --format answer
 ```
 
 ## Recommendation Rules
 
 - Apps answer "install what"; guides answer "how to set it up, configure it, fix it, or use it".
+- Treat `analysis.effective_mode` as binding. If it is `apps`, the final answer must not contain "推荐攻略", "实操攻略", setup steps, or tutorial links. If it is `guides`, the final answer must not contain "推荐应用".
 - For remote access, intranet tunneling, port forwarding, Windows remote desktop, VNC, RDP, Netmap, or "through Lazycat to access another computer", prefer guide articles unless the user explicitly asks what app to install.
 - Prefer exact matches in app name/brief/keywords and guide title/content.
 - Use the official app name exactly from `apps[].name`. Never invent app names from package names, English query words, or guide text. Do not output `package` as the app name.
@@ -50,6 +59,7 @@ python3 scripts/lazycat_recommend.py "<user need>" --mode guides
 - If relevance is weak, label the result as "可作为候选" instead of presenting it as certain.
 - Omit empty or irrelevant sections. If there is no strong app match, do not show "推荐应用".
 - Do not say "最新实时检索保证当前可用" in the answer. Just give the recommendation.
+- Do not recommend webhook relays, generic alerting systems, server monitoring, or infrastructure observability tools for "monitor a WeChat public account" unless the user explicitly says they already have a webhook/event source and only need alert forwarding.
 
 ## Answer Shape
 
@@ -93,7 +103,7 @@ Expected behavior: analyze this as a remote-access how-to problem, not an app-sh
 
 User: "我想要监控一下公众号，某个公众号，你帮我推荐一下懒猫商店里面的应用"
 
-Expected behavior: analyze "监控公众号" as tracking a public account's article updates, not server/port monitoring. Prefer apps such as WeRSS or WeWe RSS for subscribing/generating RSS. If push notification is needed, mention rsspush as a companion. Do not recommend server monitoring apps like Grafana, Prometheus, Uptime Kuma, HertzBeat, Nezha, or "在线设备获取" unless the user is actually monitoring infrastructure.
+Expected behavior: analyze "监控公众号" as tracking a public account's article updates, not server/port monitoring and not webhook plumbing. Because the user explicitly asks for Appstore apps, output only "推荐应用". Prefer WeRSS or WeWe RSS for subscribing/generating RSS, and rsspush only as a companion for push notifications. Do not output guide articles, setup steps, GitHub manuals, Gosmee, PrometheusAlert, Grafana, Prometheus, Uptime Kuma, HertzBeat, Nezha, or "在线设备获取" unless the user explicitly changes the scenario.
 
 User: "还有吗？我想要智慧屏的攻略呀"
 
