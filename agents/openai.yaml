@@ -1,0 +1,6 @@
+interface:
+  display_name: "懒猫微服推荐"
+  short_description: "按实时数据推荐懒猫软件与攻略"
+  default_prompt: "Use $lazycat-recommender to recommend Lazycat MicroServer apps and guides for my goal."
+policy:
+  allow_implicit_invocation: true
