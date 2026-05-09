@@ -12,6 +12,83 @@ APPSTORE_API = "https://appstore.api.lazycat.cloud/api/v3"
 APPSTORE_CDN = "https://dl.lazycat.cloud/appstore/metarepo"
 PLAYGROUND_API = "https://playground.api.lazycat.cloud/api"
 
+FILLER_PHRASES = [
+    "我想",
+    "我要",
+    "我需要",
+    "帮我",
+    "给我",
+    "推荐",
+    "找一个",
+    "有没有",
+    "可以",
+    "能够",
+    "实现",
+    "懒猫",
+    "微服",
+    "应用",
+    "软件",
+    "攻略",
+    "文章",
+    "教程",
+    "怎么",
+    "如何",
+    "什么",
+    "一个",
+    "一下",
+    "相关",
+    "需求",
+]
+
+INTENT_TERM_GROUPS = [
+    ("相册", "照片", "图片", "图像", "手机照片", "photo", "photos", "immich"),
+    ("备份", "同步", "迁移", "恢复", "上传", "云端", "保存", "存储", "backup", "sync"),
+    ("网盘", "云盘", "文件", "共享", "存储", "alist", "nextcloud"),
+    ("下载", "离线下载", "磁力", "bt", "种子", "qbittorrent", "transmission", "aria2"),
+    ("影音", "电影", "视频", "媒体库", "播放器", "jellyfin", "emby", "plex"),
+    ("音乐", "歌单", "音频", "navidrome", "audiobookshelf"),
+    ("阅读", "电子书", "rss", "rsshub", "miniflux", "书库"),
+    ("笔记", "文档", "知识库", "wiki", "notion", "outline", "思源"),
+    ("密码", "密钥", "凭据", "bitwarden", "vaultwarden", "passkey"),
+    ("内网穿透", "远程访问", "反向代理", "frp", "cloudflare", "tailscale", "zerotier", "ddns"),
+    ("网站", "博客", "建站", "主页", "wordpress", "typecho", "halo"),
+    ("代码", "git", "仓库", "gitea", "gitlab", "code-server", "vscode"),
+    ("数据库", "mysql", "postgres", "redis", "mongodb"),
+    ("自动化", "智能家居", "home assistant", "ha", "物联网"),
+    ("监控", "告警", "日志", "uptime", "grafana", "prometheus"),
+    ("ai", "大模型", "聊天", "机器人", "ollama", "openai", "llm"),
+    ("书签", "收藏", "链接", "linkwarden"),
+    ("日历", "通讯录", "caldav", "carddav", "baikal"),
+]
+
+GENERIC_TERMS = {
+    "一个",
+    "一下",
+    "什么",
+    "怎么",
+    "如何",
+    "可以",
+    "能够",
+    "实现",
+    "相关",
+    "需求",
+    "管理",
+    "工具",
+    "软件",
+    "应用",
+    "教程",
+    "攻略",
+    "文章",
+    "懒猫",
+    "微服",
+    "搭建",
+    "部署",
+    "使用",
+    "配置",
+    "推荐",
+    "和",
+}
+
 
 def fetch_json(url, timeout=20):
     req = urllib.request.Request(
@@ -57,26 +134,55 @@ def safe_get(d, path, default=None):
     return cur
 
 
-def score_text(query, fields):
+def score_text(query, fields, weights=None):
     query = (query or "").strip().lower()
     if not query:
         return 0
-    terms = query_terms(query)
+    terms = meaningful_terms(query)
     score = 0
-    text = "\n".join(str(x or "") for x in fields).lower()
-    title = str(fields[0] or "").lower() if fields else ""
+    weights = weights or [8, 5, 2, 4, 1, 1]
+    field_texts = [str(x or "").lower() for x in fields]
+    text = "\n".join(field_texts)
     for term in terms:
         if len(term) <= 1:
             continue
-        if term in title:
-            score += 8
-        if term in text:
-            score += 4
+        for index, field_text in enumerate(field_texts):
+            if term in field_text:
+                score += weights[index] if index < len(weights) else 1
+    title = field_texts[0] if field_texts else ""
     if query in title:
         score += 10
     if query in text:
         score += 6
     return score
+
+
+def meaningful_terms(query):
+    query = (query or "").strip().lower()
+    if not query:
+        return []
+
+    terms = []
+    compact = compact_need(query)
+    lowered = compact.lower()
+
+    for group in INTENT_TERM_GROUPS:
+        if any(term.lower() in query for term in group):
+            terms.extend(group)
+
+    for token in re.findall(r"[a-z0-9][a-z0-9.+_-]*", lowered):
+        if token not in GENERIC_TERMS and len(token) > 1:
+            terms.append(token)
+
+    if not terms:
+        for token in re.split(r"[\s,，;；/、|]+", lowered):
+            cjk = "".join(ch for ch in token if "\u4e00" <= ch <= "\u9fff")
+            if 2 <= len(cjk) <= 10 and cjk not in GENERIC_TERMS:
+                terms.append(cjk)
+            if len(cjk) >= 3:
+                terms.extend(cjk[i : i + 2] for i in range(len(cjk) - 1))
+
+    return [term for term in ordered_unique(terms) if term not in GENERIC_TERMS and len(term) > 1]
 
 
 def query_terms(query):
@@ -89,6 +195,102 @@ def query_terms(query):
         latin = re.findall(r"[a-z0-9][a-z0-9.+_-]*", token)
         terms.update(latin)
     return sorted(terms, key=len, reverse=True)
+
+
+def ordered_unique(values):
+    seen = set()
+    result = []
+    for value in values:
+        value = str(value or "").strip()
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def compact_need(query):
+    compact = query.strip()
+    for phrase in FILLER_PHRASES:
+        compact = compact.replace(phrase, " ")
+    compact = re.sub(r"\s+", " ", compact).strip(" ，,。.!！?？")
+    return compact
+
+
+def result_text(fields):
+    return "\n".join(str(x or "") for x in fields).lower()
+
+
+def evidence_terms(query, fields, strong_indexes=None):
+    indexes = strong_indexes if strong_indexes is not None else range(len(fields))
+    text = result_text(fields[index] for index in indexes if index < len(fields))
+    return [term for term in meaningful_terms(query) if term.lower() in text]
+
+
+def query_intent_groups(query):
+    lowered = (query or "").lower()
+    groups = []
+    for group in INTENT_TERM_GROUPS:
+        if any(term.lower() in lowered for term in group):
+            groups.append(group)
+    return groups
+
+
+def intent_coverage(query, fields):
+    text = result_text(fields)
+    coverage = []
+    for group in query_intent_groups(query):
+        matched = [term for term in group if term.lower() in text]
+        if matched:
+            coverage.append(matched[:3])
+    return coverage
+
+
+def coverage_bonus(query, fields, strong_fields):
+    groups = query_intent_groups(query)
+    if not groups:
+        return 0
+
+    covered = intent_coverage(query, fields)
+    strong_covered = intent_coverage(query, strong_fields)
+    score = len(covered) * 8 + len(strong_covered) * 10
+
+    if len(groups) > 1 and len(covered) == len(groups):
+        score += 12
+    elif len(groups) > 1 and len(covered) == 1:
+        score -= 8
+
+    return score
+
+
+def build_search_keywords(query, limit=8):
+    query = (query or "").strip()
+    keywords = []
+    if query:
+        keywords.append(query)
+
+    compact = compact_need(query)
+    if compact and compact != query:
+        keywords.append(compact)
+
+    lowered = query.lower()
+    matched_terms = []
+    for group in INTENT_TERM_GROUPS:
+        if any(term.lower() in lowered for term in group):
+            matched_terms.extend(group[:4])
+
+    latin_terms = re.findall(r"[a-z0-9][a-z0-9.+_-]*(?:\s+[a-z0-9][a-z0-9.+_-]*)?", lowered)
+    matched_terms.extend(latin_terms)
+
+    keywords.extend(matched_terms)
+    if len(matched_terms) >= 2:
+        keywords.append(" ".join(matched_terms[:2]))
+        keywords.append(" ".join(matched_terms[:3]))
+
+    return ordered_unique(keywords)[:limit] or [""]
 
 
 def app_url(package):
@@ -114,6 +316,8 @@ def normalize_app(item, query):
         info.get("source"),
         package,
     ]
+    strong_fields = [fields[index] for index in [0, 1, 3, 5]]
+    base_score = score_text(query, fields) + coverage_bonus(query, fields, strong_fields)
     return {
         "type": "app",
         "name": name,
@@ -129,7 +333,11 @@ def normalize_app(item, query):
         "support_pc": bool(info.get("support_pc")),
         "support_mobile": bool(info.get("support_mobile")),
         "updated_at": item.get("updated_at") or item.get("version_updated_at") or "",
-        "score": score_text(query, fields) + min(int(count.get("downloads") or 0), 5000) / 10000,
+        "strong_evidence_terms": evidence_terms(query, fields, strong_indexes=[0, 1, 3, 5]),
+        "evidence_terms": evidence_terms(query, fields),
+        "intent_coverage": intent_coverage(query, fields),
+        "matched_keywords": [],
+        "score": base_score + min(int(count.get("downloads") or 0), 5000) / 10000,
     }
 
 
@@ -142,6 +350,8 @@ def normalize_guide(item, query):
         " ".join(item.get("categories") or []),
         item.get("type"),
     ]
+    strong_fields = [fields[index] for index in [0, 2]]
+    base_score = score_text(query, fields, weights=[10, 2, 5, 1]) + coverage_bonus(query, fields, strong_fields)
     return {
         "type": "guide",
         "title": title,
@@ -155,7 +365,11 @@ def normalize_guide(item, query):
         "views": item.get("views") or item.get("viewsTotal") or 0,
         "thumbs": item.get("thumbCount") or 0,
         "comments": item.get("commentCount") or 0,
-        "score": score_text(query, fields) + min(int(item.get("views") or 0), 3000) / 10000,
+        "strong_evidence_terms": evidence_terms(query, fields, strong_indexes=[0, 2]),
+        "evidence_terms": evidence_terms(query, fields),
+        "intent_coverage": intent_coverage(query, fields),
+        "matched_keywords": [],
+        "score": base_score + min(int(item.get("views") or 0), 3000) / 10000,
     }
 
 
@@ -200,28 +414,89 @@ def search_guides(keyword, category_id=None, size=20, page=0, sort="-createdAt")
     return fetch_json(f"{PLAYGROUND_API}/workshop/guideline/list?{q(params)}")
 
 
+def collect_apps(query_text, category_id, size, sort):
+    collected = {}
+    search_keywords = build_search_keywords(query_text)
+    fetch_size = max(size * 3, size, 12)
+    for keyword_index, keyword in enumerate(search_keywords):
+        payload = search_apps(keyword, category_id=category_id, size=fetch_size, sort=sort)
+        for item in payload.get("items") or []:
+            package = item.get("package") or safe_get(item, ["version", "package"], "")
+            if not package:
+                continue
+            normalized = normalize_app(item, f"{query_text} {keyword}".strip())
+            if not normalized["strong_evidence_terms"]:
+                continue
+            if normalized["strong_evidence_terms"]:
+                normalized["score"] += 12
+            normalized["matched_keywords"] = [keyword] if keyword else []
+            normalized["score"] += max(0, 3 - keyword_index * 0.25)
+            existing = collected.get(package)
+            if not existing or normalized["score"] > existing["score"]:
+                if existing:
+                    normalized["matched_keywords"] = ordered_unique(
+                        existing.get("matched_keywords", []) + normalized["matched_keywords"]
+                    )
+                collected[package] = normalized
+            elif existing and keyword:
+                existing["matched_keywords"] = ordered_unique(existing.get("matched_keywords", []) + [keyword])
+    return sorted(collected.values(), key=lambda x: x["score"], reverse=True)[:size], search_keywords
+
+
+def collect_guides(query_text, category_id, size, sort):
+    collected = {}
+    search_keywords = build_search_keywords(query_text)
+    fetch_size = max(size * 3, size, 12)
+    for keyword_index, keyword in enumerate(search_keywords):
+        payload = search_guides(keyword, category_id=category_id, size=fetch_size, sort=sort)
+        for item in payload.get("items") or []:
+            guide_id = item.get("id")
+            if not guide_id:
+                continue
+            normalized = normalize_guide(item, f"{query_text} {keyword}".strip())
+            if not normalized["strong_evidence_terms"] and len(normalized["evidence_terms"]) < 2:
+                continue
+            if normalized["strong_evidence_terms"]:
+                normalized["score"] += 10
+            normalized["matched_keywords"] = [keyword] if keyword else []
+            normalized["score"] += max(0, 3 - keyword_index * 0.25)
+            existing = collected.get(guide_id)
+            if not existing or normalized["score"] > existing["score"]:
+                if existing:
+                    normalized["matched_keywords"] = ordered_unique(
+                        existing.get("matched_keywords", []) + normalized["matched_keywords"]
+                    )
+                collected[guide_id] = normalized
+            elif existing and keyword:
+                existing["matched_keywords"] = ordered_unique(existing.get("matched_keywords", []) + [keyword])
+    return sorted(collected.values(), key=lambda x: x["score"], reverse=True)[:size], search_keywords
+
+
 def main():
     parser = argparse.ArgumentParser(description="Query Lazycat appstore and playground recommendation data.")
     parser.add_argument("query", nargs="*", help="User need / search keywords")
     parser.add_argument("--apps", type=int, default=8, help="Number of app candidates to return")
     parser.add_argument("--guides", type=int, default=8, help="Number of guide candidates to return")
+    parser.add_argument("--mode", choices=["both", "apps", "guides"], default="both", help="Search apps, guides, or both")
     parser.add_argument("--app-category", type=int, default=0, help="Appstore category id, default 0")
     parser.add_argument("--guide-category", type=int, help="Playground guideline category id")
+    parser.add_argument("--include-categories", action="store_true", help="Include category lists for category discovery")
     parser.add_argument("--sort-apps", default="counting.desc", help="App sort, e.g. counting.desc or updated_at.desc")
     parser.add_argument("--sort-guides", default="-createdAt", help="Guide sort, e.g. -createdAt or -updatedAt")
     args = parser.parse_args()
 
     query_text = " ".join(args.query).strip()
+    search_keywords = build_search_keywords(query_text)
 
     result = {
         "queried_at_unix": int(time.time()),
         "query": query_text,
+        "search_keywords": search_keywords,
         "sources": {
             "appstore": "https://lazycat.cloud/appstore/",
             "playground": "https://lazycat.cloud/playground/",
         },
         "counts": {},
-        "categories": {},
         "apps": [],
         "guides": [],
         "errors": [],
@@ -245,39 +520,41 @@ def main():
     except Exception as exc:
         result["errors"].append(f"guide count fetch failed: {exc}")
 
-    try:
-        result["categories"]["apps"] = get_app_categories()
-    except Exception as exc:
-        result["errors"].append(f"app categories fetch failed: {exc}")
+    if args.include_categories:
+        result["categories"] = {}
+        try:
+            result["categories"]["apps"] = get_app_categories()
+        except Exception as exc:
+            result["errors"].append(f"app categories fetch failed: {exc}")
 
-    try:
-        result["categories"]["guides"] = (get_guide_categories().get("items") or [])
-    except Exception as exc:
-        result["errors"].append(f"guide categories fetch failed: {exc}")
+        try:
+            result["categories"]["guides"] = (get_guide_categories().get("items") or [])
+        except Exception as exc:
+            result["errors"].append(f"guide categories fetch failed: {exc}")
 
-    try:
-        apps = search_apps(
-            query_text,
-            category_id=args.app_category,
-            size=max(args.apps * 3, args.apps),
-            sort=args.sort_apps,
-        ).get("items") or []
-        normalized = [normalize_app(x, query_text) for x in apps]
-        result["apps"] = sorted(normalized, key=lambda x: x["score"], reverse=True)[: args.apps]
-    except Exception as exc:
-        result["errors"].append(f"app search failed: {exc}")
+    if args.mode in ("both", "apps"):
+        try:
+            result["apps"], app_keywords = collect_apps(
+                query_text,
+                category_id=args.app_category,
+                size=args.apps,
+                sort=args.sort_apps,
+            )
+            result["search_keywords"] = ordered_unique(result["search_keywords"] + app_keywords)
+        except Exception as exc:
+            result["errors"].append(f"app search failed: {exc}")
 
-    try:
-        guides = search_guides(
-            query_text,
-            category_id=args.guide_category,
-            size=max(args.guides * 3, args.guides),
-            sort=args.sort_guides,
-        ).get("items") or []
-        normalized = [normalize_guide(x, query_text) for x in guides]
-        result["guides"] = sorted(normalized, key=lambda x: x["score"], reverse=True)[: args.guides]
-    except Exception as exc:
-        result["errors"].append(f"guide search failed: {exc}")
+    if args.mode in ("both", "guides"):
+        try:
+            result["guides"], guide_keywords = collect_guides(
+                query_text,
+                category_id=args.guide_category,
+                size=args.guides,
+                sort=args.sort_guides,
+            )
+            result["search_keywords"] = ordered_unique(result["search_keywords"] + guide_keywords)
+        except Exception as exc:
+            result["errors"].append(f"guide search failed: {exc}")
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if not result["errors"] else 2
