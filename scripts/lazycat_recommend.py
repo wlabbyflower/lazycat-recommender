@@ -144,6 +144,90 @@ DOMAIN_PROFILES = [
             "nezha",
         ),
     },
+    {
+        "id": "smart_screen",
+        "label": "懒猫智慧屏/大屏电视",
+        "triggers": (
+            "智慧屏",
+            "懒猫智慧屏",
+            "大屏",
+            "大屏幕",
+            "看电视",
+            "电视直播",
+            "hdmi",
+            "smart tv",
+            "smart screen",
+            "lzctvcontroller",
+        ),
+        "object_terms": (
+            "智慧屏",
+            "懒猫智慧屏",
+            "大屏",
+            "大屏幕",
+            "电视",
+            "看电视",
+            "hdmi",
+            "chromium",
+            "遥控器",
+            "smart tv",
+            "smart screen",
+            "lzctvcontroller",
+        ),
+        "solution_terms": (
+            "观影",
+            "影音",
+            "直播",
+            "卫视",
+            "cctv",
+            "电视台",
+            "浏览器",
+            "大屏浏览器",
+            "遥控",
+            "墨水屏",
+            "闺蜜机",
+            "使用指南",
+            "更新",
+            "教程",
+            "攻略",
+        ),
+        "keywords": (
+            "智慧屏",
+            "懒猫智慧屏",
+            "懒猫微服怎么大屏看电视",
+            "大屏看电视",
+            "大屏",
+            "看电视",
+            "HDMI",
+            "电视",
+            "懒猫智慧屏使用指南",
+            "懒猫智慧屏接墨水屏体验",
+        ),
+        "preferred_packages": {
+            "cloud.lazycat.app.lzctvcontroller": 130,
+            "cloud.lazycat.app.video": 55,
+            "cloud.lazycat.app.moontvplus": 45,
+            "cloud.lazycat.app.libretv": 42,
+            "cloud.lazycat.app.jellyfinsingle": 35,
+            "cloud.lazycat.app.plex": 35,
+        },
+        "preferred_guides": {
+            569: 150,
+            422: 95,
+            1124: 80,
+            525: 75,
+            838: 55,
+            511: 45,
+        },
+        "negative_terms": (
+            "飞牛",
+            "apple tv",
+            "infuse",
+            "plex",
+            "jellyfin",
+            "moontvplus",
+            "lightos",
+        ),
+    },
 ]
 
 GENERIC_TERMS = {
@@ -358,8 +442,44 @@ def detect_mode(query):
     strong_app_signal = has_any(query, STRONG_APP_SIGNAL_TERMS)
     remote_signal = has_any(query, ("远程访问", "远程桌面", "远程控制", "内网穿透", "vnc", "rdp", "3389"))
     profiles = active_domain_profiles(query)
+    explicit_guide_signal = has_any(
+        query,
+        (
+            "攻略",
+            "教程",
+            "指南",
+            "攻略文章",
+            "教程文章",
+            "步骤",
+            "怎么做",
+            "怎么用",
+            "如何使用",
+        ),
+    )
+    explicit_both_signal = has_any(
+        query,
+        (
+            "应用和攻略",
+            "攻略和应用",
+            "应用和教程",
+            "教程和应用",
+            "软件和攻略",
+            "攻略还有应用",
+            "应用还有攻略",
+            "都给",
+            "都要",
+            "一起推荐",
+            "同时推荐",
+        ),
+    )
 
-    if strong_app_signal and not has_any(query, ("攻略", "教程", "步骤", "怎么配置", "如何配置")):
+    if explicit_both_signal:
+        return "both", "这个需求明确同时要应用与攻略，需要两边一起判断。"
+    if explicit_guide_signal and not strong_app_signal:
+        return "guides", "这是明确要求攻略/教程/文章的问题，只需要攻略结果。"
+    if explicit_guide_signal and strong_app_signal:
+        return "guides", "虽然提到了应用，但用户明确要攻略/教程，优先只返回攻略文章。"
+    if strong_app_signal:
         return "apps", "这是明确要求推荐商店应用的问题，优先需要应用结果。"
     if profiles and has_any(query, ("下载", "批量", "搜索", "检索", "监控", "订阅", "推送", "更新", "生成")) and not has_any(query, ("怎么", "如何", "教程", "攻略", "步骤")):
         return "both", "这是围绕具体对象的自动化/订阅/搜索需求，需要先看可安装应用，必要时补充攻略。"
@@ -472,6 +592,61 @@ def profile_match(query, fields, package):
             score += 30
         if package == "cloud.lazycat.app.rsshub":
             score += 25
+
+    return score, ordered_unique(hits), ordered_unique(negative_hits)
+
+
+def guide_profile_match(query, fields, guide_id, products):
+    profiles = active_domain_profiles(query)
+    if not profiles:
+        return 0, [], []
+
+    text = result_text(fields)
+    strong_text = result_text([fields[index] for index in [0, 2, 4] if index < len(fields)])
+    product_set = {str(product or "") for product in (products or [])}
+    lowered_query = (query or "").lower()
+    score = 0
+    hits = []
+    negative_hits = []
+
+    for profile in profiles:
+        preferred_guide_score = profile.get("preferred_guides", {}).get(guide_id, 0)
+        if preferred_guide_score:
+            score += preferred_guide_score
+            hits.append(f"preferred-guide:{profile['id']}")
+
+        for package, package_score in profile.get("preferred_packages", {}).items():
+            if package in product_set:
+                score += min(package_score, 90)
+                hits.append(f"linked-app:{package}")
+
+        object_hits = [term for term in profile["object_terms"] if term.lower() in text]
+        strong_object_hits = [term for term in profile["object_terms"] if term.lower() in strong_text]
+        solution_hits = [term for term in profile["solution_terms"] if term.lower() in text]
+        strong_solution_hits = [term for term in profile["solution_terms"] if term.lower() in strong_text]
+        negative = [term for term in profile.get("negative_terms", ()) if term.lower() in text]
+
+        score += len(object_hits) * 20
+        score += len(strong_object_hits) * 24
+        score += len(solution_hits) * 7
+        score += len(strong_solution_hits) * 10
+        score -= len(negative) * 22
+
+        hits.extend(object_hits[:4])
+        hits.extend(solution_hits[:4])
+        negative_hits.extend(negative[:4])
+
+        if profile["id"] == "smart_screen":
+            if guide_id == 569 and has_any(lowered_query, ("智慧屏", "大屏", "看电视", "电视", "观影", "攻略")):
+                score += 90
+            if guide_id == 1124 and has_any(lowered_query, ("墨水屏", "电子墨水", "水墨屏")):
+                score += 120
+            if guide_id == 422 and has_any(lowered_query, ("使用指南", "指南", "怎么用", "入门", "使用")):
+                score += 80
+            if guide_id in (838, 511, 475, 465) and has_any(lowered_query, ("更新", "新版", "版本")):
+                score += 80
+            if guide_id == 569 and has_any(lowered_query, ("墨水屏", "电子墨水", "水墨屏")):
+                score -= 70
 
     return score, ordered_unique(hits), ordered_unique(negative_hits)
 
@@ -597,14 +772,17 @@ def normalize_app(item, query):
 def normalize_guide(item, query):
     title = item.get("title") or ""
     content = item.get("content") or ""
+    products = item.get("products") or []
     fields = [
         title,
         content,
         " ".join(item.get("categories") or []),
         item.get("type"),
+        " ".join(products),
     ]
-    strong_fields = [fields[index] for index in [0, 2]]
-    base_score = score_text(query, fields, weights=[10, 2, 5, 1]) + coverage_bonus(query, fields, strong_fields)
+    strong_fields = [fields[index] for index in [0, 2, 4]]
+    base_score = score_text(query, fields, weights=[10, 2, 5, 1, 8]) + coverage_bonus(query, fields, strong_fields)
+    profile_score, profile_hits, profile_negative_hits = guide_profile_match(query, fields, item.get("id"), products)
     return {
         "type": "guide",
         "title": title,
@@ -612,17 +790,21 @@ def normalize_guide(item, query):
         "url": guide_url(item.get("id")),
         "summary": truncate(content, 520),
         "categories": item.get("categories") or [],
+        "products": products,
         "author": safe_get(item, ["user", "nickname"], "") or safe_get(item, ["user", "username"], ""),
         "created_at": item.get("createdAt") or "",
         "updated_at": item.get("updatedAt") or "",
         "views": item.get("views") or item.get("viewsTotal") or 0,
         "thumbs": item.get("thumbCount") or 0,
         "comments": item.get("commentCount") or 0,
-        "strong_evidence_terms": evidence_terms(query, fields, strong_indexes=[0, 2]),
+        "strong_evidence_terms": evidence_terms(query, fields, strong_indexes=[0, 2, 4]),
         "evidence_terms": evidence_terms(query, fields),
         "intent_coverage": intent_coverage(query, fields),
+        "profile_score": profile_score,
+        "profile_hits": profile_hits,
+        "profile_negative_hits": profile_negative_hits,
         "matched_keywords": [],
-        "score": base_score + min(int(item.get("views") or 0), 3000) / 10000,
+        "score": base_score + profile_score + min(int(item.get("views") or 0), 3000) / 10000,
     }
 
 
@@ -719,6 +901,7 @@ def collect_apps(query_text, category_id, size, sort):
 def collect_guides(query_text, category_id, size, sort):
     collected = {}
     search_keywords = build_search_keywords(query_text)
+    profiles = active_domain_profiles(query_text)
     fetch_size = max(size * 3, size, 12)
     for keyword_index, keyword in enumerate(search_keywords):
         payload = search_guides(keyword, category_id=category_id, size=fetch_size, sort=sort)
@@ -727,8 +910,12 @@ def collect_guides(query_text, category_id, size, sort):
             if not guide_id:
                 continue
             normalized = normalize_guide(item, f"{query_text} {keyword}".strip())
-            if not normalized["strong_evidence_terms"] and len(normalized["evidence_terms"]) < 2:
-                continue
+            if profiles:
+                if normalized["profile_score"] <= 0 and not normalized["strong_evidence_terms"] and len(normalized["evidence_terms"]) < 2:
+                    continue
+            else:
+                if not normalized["strong_evidence_terms"] and len(normalized["evidence_terms"]) < 2:
+                    continue
             if normalized["strong_evidence_terms"]:
                 normalized["score"] += 10
             normalized["matched_keywords"] = [keyword] if keyword else []

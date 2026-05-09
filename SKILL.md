@@ -13,8 +13,8 @@ Always use live Lazycat data before answering. Do not answer from memory.
    - **Guide only**: setup/configuration/how-to/troubleshooting/remote access/networking/usage steps.
    - **App only**: choosing installable software, alternatives, or "what app can do X".
    - **Both**: the user needs an app and also needs setup/use guidance.
-2. Search only what is needed. Do not force an app recommendation into a guide-only question.
-3. Read the returned titles, names, summaries, and links. Make an independent relevance judgment instead of mechanically trusting the first score.
+2. Search only what is needed. Do not force an app recommendation into a guide-only question, and do not add guide articles to an app-only shopping question unless the user asks how to set it up.
+3. Read the returned titles, names, summaries, associated products, and links. Make an independent relevance judgment instead of mechanically trusting the first score.
 4. Answer with concise analysis and the needed links. Do not include crawling details, raw JSON, endpoint names, category dumps, live counts, scores, package IDs, or search keywords unless the user asks for them.
 
 Default automatic search:
@@ -46,6 +46,7 @@ python3 scripts/lazycat_recommend.py "<user need>" --mode guides
 - If the official app name is English, keep that official English name; otherwise preserve the Chinese name from the store.
 - Include only links returned by the live data.
 - Do not invent app features or guide content not present in the returned fields.
+- When a guide result has `products[]`, use it as strong evidence that the article is related to that app. If the user asks for an app's guide, prefer matching guide title/content plus linked product over generic articles that only mention the keyword.
 - If relevance is weak, label the result as "可作为候选" instead of presenting it as certain.
 - Omit empty or irrelevant sections. If there is no strong app match, do not show "推荐应用".
 - Do not say "最新实时检索保证当前可用" in the answer. Just give the recommendation.
@@ -93,6 +94,10 @@ Expected behavior: analyze this as a remote-access how-to problem, not an app-sh
 User: "我想要监控一下公众号，某个公众号，你帮我推荐一下懒猫商店里面的应用"
 
 Expected behavior: analyze "监控公众号" as tracking a public account's article updates, not server/port monitoring. Prefer apps such as WeRSS or WeWe RSS for subscribing/generating RSS. If push notification is needed, mention rsspush as a companion. Do not recommend server monitoring apps like Grafana, Prometheus, Uptime Kuma, HertzBeat, Nezha, or "在线设备获取" unless the user is actually monitoring infrastructure.
+
+User: "还有吗？我想要智慧屏的攻略呀"
+
+Expected behavior: this is a guide-only follow-up. Do not add a "推荐应用" section. Prefer the official Playground guide linked to the Smart TV app, especially "懒猫微服怎么大屏看电视" (`/playground/guideline/569`) when the scenario is big-screen TV viewing. If the user asks about e-ink display, prefer "懒猫智慧屏接墨水屏体验" instead.
 
 ## Data Source Reference
 

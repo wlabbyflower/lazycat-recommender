@@ -42,6 +42,10 @@ def packages(data):
     return [item["package"] for item in data["apps"]]
 
 
+def guide_ids(data):
+    return [item["id"] for item in data["guides"]]
+
+
 CASES = [
     {
         "name": "公众号更新监控推荐应用",
@@ -87,6 +91,22 @@ CASES = [
         "mode": "guides",
         "apps_empty": True,
         "must_title_contains": "远程",
+    },
+    {
+        "name": "智慧屏攻略只返回攻略",
+        "query": "还有吗？我想要智慧屏的攻略呀",
+        "mode": "guides",
+        "apps_empty": True,
+        "must_first_guide_id": 569,
+        "must_first_title": "懒猫微服怎么大屏看电视",
+        "must_guide_product": "cloud.lazycat.app.lzctvcontroller",
+    },
+    {
+        "name": "智慧屏应用首选官方应用",
+        "query": "我想找懒猫智慧屏应用",
+        "mode": "apps",
+        "must_first_package": "cloud.lazycat.app.lzctvcontroller",
+        "must_first_name": "懒猫智慧屏",
     },
     {
         "name": "相册管理应用",
@@ -187,12 +207,28 @@ def assert_case(case):
     if "must_first_title" in case:
         assert_true(guide_titles and guide_titles[0] == case["must_first_title"], f"{case['name']}: unexpected first guide {guide_titles[:3]}")
 
+    if "must_first_guide_id" in case:
+        ids = guide_ids(data)
+        assert_true(ids and ids[0] == case["must_first_guide_id"], f"{case['name']}: unexpected first guide id {ids[:3]}")
+
     if "must_title_contains" in case:
         needle = case["must_title_contains"]
         assert_true(any(needle in title for title in guide_titles), f"{case['name']}: no guide title contains {needle!r}: {guide_titles[:5]}")
 
     if "must_first_name" in case:
         assert_true(app_names and app_names[0] == case["must_first_name"], f"{case['name']}: unexpected first app {app_names[:3]}")
+
+    if "must_first_package" in case:
+        assert_true(app_packages and app_packages[0] == case["must_first_package"], f"{case['name']}: unexpected first package {app_packages[:3]}")
+
+    if "must_guide_product" in case:
+        expected_product = case["must_guide_product"]
+        linked_products = [
+            product
+            for guide in data["guides"]
+            for product in guide.get("products", [])
+        ]
+        assert_true(expected_product in linked_products, f"{case['name']}: missing linked product {expected_product}; got {linked_products[:8]}")
 
     for package in case.get("must_packages", []):
         assert_true(package in app_packages, f"{case['name']}: missing package {package}; got {app_packages[:8]}")
